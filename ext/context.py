@@ -4,7 +4,7 @@ import asyncio
 from colorthief import ColorThief
 from urllib.parse import urlparse
 import io
-
+import os
 
 class CustomContext(commands.Context):
     '''Custom Context class to provide utility.'''
@@ -16,9 +16,9 @@ class CustomContext(commands.Context):
         '''Returns the bot's aiohttp client session'''
         return self.bot.session
 
-    async def delete(self):
+    def delete(self):
         '''shortcut'''
-        return await self.message.delete()
+        return self.message.delete()
 
     async def get_ban(self, name_or_id):
         '''Helper function to retrieve a banned user'''
@@ -52,7 +52,7 @@ class CustomContext(commands.Context):
         '''Small helper for confirmation messages.'''
         await self.send(msg or '*Are you sure you want to proceed?* `(Y/N)`')
         resp = self.bot.wait_for('message', check=lambda m: m == ctx.author)
-        falsy = ['n', 'no', 'false','0','fuck off']
+        falsy = ['n', 'no', 'false','0','fuck off','f']
         if resp.content.lower().strip() in falsy:
             return False
         else:
@@ -73,12 +73,20 @@ class CustomContext(commands.Context):
     def is_valid_image_url(url):
         '''Checks if a url leads to an image.'''
         types = ['.png', '.jpg', '.gif', '.bmp', '.webp']
-        path = urlparse(url).path
-        if any(path.endswith(i) for i in types):
-            return True
+        parsed = urlparse(url)
+        if any(parsed.path.endswith(i) for i in types):
+            return url.replace(parsed.query, 'size=128')
 
-    async def get_dominant_color(self, url):
+    async def get_dominant_color(self, url=None, quality=10):
         '''Returns the dominant color of an image from a url'''
+        maybe_col = os.environ.get('COLOR')
+
+        url = url or self.author.avatar_url
+
+        if maybe_col:
+            raw = int(maybe_col.strip('#'), 16)
+            return discord.Color(value=raw)
+
         if not self.is_valid_image_url(url):
             raise ValueError('Invalid image url passed.')
         try:
@@ -88,6 +96,37 @@ class CustomContext(commands.Context):
             return discord.Color.default()
 
         with io.BytesIO(image) as f:
-            color = ColorThief(f).get_color(quality=1)
+            try:
+                color = ColorThief(f).get_color(quality=quality)
+            except:
+                return discord.Color.dark_grey()
             
         return discord.Color.from_rgb(*color)
+
+    async def success(self, msg=None, delete=False):
+        if delete:
+            await ctx.message.delete()
+        if msg:
+            await self.send(msg)
+        else:
+            await self.message.add_reaction('✅')
+
+    async def failure(self, msg=None):
+        if msg:
+            await self.send(msg)
+        else:
+            await self.message.add_reaction('⁉')
+
+    @staticmethod
+    def paginate(text: str):
+        '''Simple generator that paginates text.'''
+        last = 0
+        pages = []
+        for curr in range(0, len(text)):
+            if curr % 1980 == 0:
+                pages.append(text[last:curr])
+                last = curr
+                appd_index = curr
+        if appd_index != len(text)-1:
+            pages.append(text[last:curr])
+        return list(filter(lambda a: a != '', pages))

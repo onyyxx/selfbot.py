@@ -1,7 +1,7 @@
 '''
 MIT License
 
-Copyright (c) 2017 verixx
+Copyright (c) 2017 Grok
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,7 @@ from discord.ext import commands
 from ext.context import CustomContext
 from ext.formatter import EmbedHelp
 from collections import defaultdict
+from ext import embedtobox
 import asyncio
 import aiohttp
 import datetime
@@ -39,7 +40,6 @@ import re
 import textwrap
 from PIL import Image
 import io
-
 
 class Selfbot(commands.Bot):
     '''
@@ -57,23 +57,32 @@ class Selfbot(commands.Bot):
         self.formatter = EmbedHelp()
         self.session = aiohttp.ClientSession(loop=self.loop)
         self.process = psutil.Process()
+        self.prefix = None
         self._extensions = [x.replace('.py', '') for x in os.listdir('cogs') if x.endswith('.py')]
         self.last_message = None
         self.messages_sent = 0
         self.commands_used = defaultdict(int)
         self.remove_command('help')
-        self.add_command(self.new_help_command)
         self.add_command(self.ping)
-        self.add_command(self._logout)
-        self.add_command(self._presence)
+        self.load_extensions()
+        self.load_community_extensions()
 
-        for extension in self._extensions:
+    def load_extensions(self, cogs=None, path='cogs.'):
+        '''Loads the default set of extensions or a seperate one if given'''
+        for extension in cogs or self._extensions:
             try:
-                self.load_extension(f'cogs.{extension}')
+                self.load_extension(f'{path}{extension}')
                 print(f'Loaded extension: {extension}')
             except Exception as e:
                 print(f'LoadError: {extension}\n'
                       f'{type(e).__name__}: {e}')
+
+    def load_community_extensions(self):
+        '''Loads up community extensions.'''
+        with open('data/community_cogs.txt') as fp:
+            to_load = fp.read().splitlines()
+        self.load_extensions(to_load, 'cogs.community.')
+
     @property
     def token(self):
         '''Returns your token wherever it is'''
@@ -92,6 +101,9 @@ class Selfbot(commands.Bot):
         with open('data/config.json') as f:
             prefix = json.load(f).get('PREFIX')
         return os.environ.get('PREFIX') or prefix or 'r.'
+
+    def restart(self):
+        os.execv(sys.executable, ['python'] + sys.argv)
 
     @staticmethod
     def run_wizard():
@@ -121,20 +133,32 @@ class Selfbot(commands.Bot):
         except Exception as e:
             print(e)
 
+    async def on_connect(self):
+        print('---------------\n'
+              'selfbot.py connected!')
+
     async def on_ready(self):
         '''Bot startup, sets uptime.'''
         if not hasattr(self, 'uptime'):
             self.uptime = datetime.datetime.utcnow()
         print(textwrap.dedent(f'''
+        Use this at your own risk,
+        dont do anything stupid, 
+        and when you get banned,
+        dont blame it at me.
         ---------------
-        selfbot.py connected!
+        Client is ready!
         ---------------
         Author: verixx#7220
         ---------------
         Logged in as: {self.user}
         User ID: {self.user.id}
         ---------------
+        Current Version: 1.0.0
+        ---------------
         '''))
+        
+        await self.change_presence(status=discord.Status.invisible, afk=True)
 
     async def on_command(self, ctx):
         cmd = ctx.command.qualified_name.replace(' ', '_')
@@ -165,108 +189,12 @@ class Selfbot(commands.Bot):
         em.title ='Pong! Websocket Latency:'
         em.description = f'{self.ws.latency * 1000:.4f} ms'
         em.color = await ctx.get_dominant_color(ctx.author.avatar_url)
-        await ctx.send(embed=em)
-
-    @commands.command(name='logout')
-    async def _logout(self, ctx):
-        '''
-        Shuts down the selfbot,
-        equivalent to a restart if you are hosting the bot on heroku.
-        '''
-        await ctx.send('`Selfbot Logging out...`')
-        await self.logout()
-
-    @commands.command(name='help')
-    async def new_help_command(self, ctx, *commands : str):
-        """Shows this message."""
-        destination = ctx.message.author if self.pm_help else ctx.message.channel
-
-        def repl(obj):
-            return self._mentions_transforms.get(obj.group(0), '')
-
-        # help by itself just lists our own commands.
-        if len(commands) == 0:
-            pages = await self.formatter.format_help_for(ctx, self)
-        elif len(commands) == 1:
-            # try to see if it is a cog name
-            name = self._mention_pattern.sub(repl, commands[0])
-            command = None
-            if name in self.cogs:
-                command = self.cogs[name]
-            else:
-                command = self.all_commands.get(name)
-                if command is None:
-                    await destination.send(self.command_not_found.format(name))
-                    return
-
-            pages = await self.formatter.format_help_for(ctx, command)
-        else:
-            name = self._mention_pattern.sub(repl, commands[0])
-            command = self.all_commands.get(name)
-            if command is None:
-                await destination.send(self.command_not_found.format(name))
-                return
-
-            for key in commands[1:]:
-                try:
-                    key = self._mention_pattern.sub(repl, key)
-                    command = command.all_commands.get(key)
-                    if command is None:
-                        await destination.send(self.command_not_found.format(key))
-                        return
-                except AttributeError:
-                    await destination.send(self.command_has_no_subcommands.format(command, key))
-                    return
-
-            pages = await self.formatter.format_help_for(ctx, command)
-
-        if self.pm_help is None:
-            characters = sum(map(lambda l: len(l), pages))
-            # modify destination based on length of pages.
-            if characters > 1000:
-                destination = ctx.message.author
-
-        color = await ctx.get_dominant_color(ctx.author.avatar_url)
-
-        for embed in pages:
-            embed.color = color
-            await destination.send(embed=embed)
-
-    @commands.command(name='presence')
-    async def _presence(self, ctx, status, *, message=None):
-        '''Change your Discord status! (Stream, Online, Idle, DND, Invisible, or clear it)'''
-        status = status.lower()
-        emb = discord.Embed(title="Presence")
-        emb.color = await ctx.get_dominant_color(ctx.author.avatar_url)
-        file = io.BytesIO()
-        if status == "online":
-            await self.change_presence(status=discord.Status.online, game=discord.Game(name=message), afk=True)
-            color = discord.Color(value=0x43b581).to_rgb()
-        elif status == "idle":
-            await self.change_presence(status=discord.Status.idle, game=discord.Game(name=message), afk=True)
-            color = discord.Color(value=0xfaa61a).to_rgb()
-        elif status == "dnd":
-            await self.change_presence(status=discord.Status.dnd, game=discord.Game(name=message), afk=True)
-            color = discord.Color(value=0xf04747).to_rgb()
-        elif status == "invis" or status == "invisible":
-            await self.change_presence(status=discord.Status.invisible, game=discord.Game(name=message), afk=True)
-            color = discord.Color(value=0x747f8d).to_rgb()
-        elif status == "stream":
-            await self.change_presence(status=discord.Status.online, game=discord.Game(name=message,type=1,url=f'https://www.twitch.tv/{message}'), afk=True)
-            color = discord.Color(value=0x593695).to_rgb()
-        elif status == "clear":
-            await self.change_presence(game=None, afk=True)
-            emb.description = "Presence cleared."
-            return await ctx.send(embed=emb)
-        else:
-            emb.description = "Please enter either `online`, `idle`, `dnd`, `invisible`, or `clear`."
-            return await ctx.send(embed=emb)
-
-        Image.new('RGB', (500, 500), color).save(file, format='PNG')
-        emb.description = "Your presence has been changed."
-        file.seek(0)
-        emb.set_author(name=status.title(), icon_url="attachment://color.png")
-        await ctx.send(file=discord.File(file, 'color.png'), embed=emb)
+        try:
+            await ctx.send(embed=em)
+        except discord.HTTPException:
+            em_list = await embedtobox.etb(emb)
+            for page in em_list:
+                await ctx.send(page)
 
 
 if __name__ == '__main__':

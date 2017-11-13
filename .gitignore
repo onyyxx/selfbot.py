@@ -2,6 +2,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.DS_Store
-data/config.json
+*.json
 cogs/testsplit.py
-data/config.json
+data/community_cogs.txt

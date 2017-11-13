@@ -37,7 +37,7 @@ class Paginator:
     max_size: int
         The maximum amount of codepoints allowed in a page.
     """
-    def __init__(self, max_size=4000):
+    def __init__(self, max_size=1900):
         self.max_size = max_size
         self._current_embed = discord.Embed()
         self._current_field = []
@@ -95,15 +95,15 @@ class Paginator:
 
         # adds the last parts not done in the while loop
         print(self.last_cog)
-        if name and value:
-            self._current_embed.add_field(name=name, value=value)
+        if self.last_cog and value:
+            self._current_embed.add_field(name=self.last_cog, value=value)
             value = ''
 
         # this means that there was no `Cog:` title thingys, that means that its a command help
         if value and not self.last_cog:
             fmt = list(filter(None, value.split('\n')))
             self._current_embed.title = f'``{fmt[0]}``' # command signiture
-            self._current_embed.description = fmt[1] # command desc
+            self._current_embed.description = '\n'.join(fmt[1:]) # command desc
 
         self._embeds.append(self._current_embed)
         self._current_embed = discord.Embed()
